@@ -1,0 +1,266 @@
+name: Sync PR Bot
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_url:
+        description: |
+          PR链接地址 (GitHub或Gitee)
+          示例: https://github.com/owner/repo/pull/123
+        required: true
+        type: string
+      personal_repo:
+        description: |
+          个人仓库 (fork仓库) (格式: owner/repo)
+          用于推送分支和创建PR
+        required: false
+        type: string
+      patch_file:
+        description: |
+          是否创建 Format Patch
+          非空表示创建 Format Patch 到文件
+          以 "/" 结尾时，表示在目录创建
+        required: false
+        type: string
+      create_pr:
+        description: |
+          是否自动创建PR
+          如果为true，将自动创建PR
+        required: false
+        type: boolean
+        default: true
+      target_branch:
+        description: |
+          目标分支名称
+          示例: main, develop, release/v1.0
+        required: false
+        type: string
+      target_repo:
+        description: |
+          目标仓库 (格式: owner/repo)
+          默认为与源PR相同的仓库
+        required: false
+        type: string
+      source_branch_name:
+        description: |
+          源分支名称
+          默认: 自动生成 (cherry-pick-pr-<pr号>-to-<目标分支>)
+        required: false
+        type: string
+      title_prefix:
+        description: |
+          PR标题前缀
+          默认: "Cherry-pick:"
+        required: false
+        type: string
+      body_tail:
+        description: |
+          PR描述尾部，将追加到PR描述末尾
+        required: false
+        type: string
+        default: |
+          This PR was created automatically. original PR: {pr_url}.
+      dry_run:
+        description: |
+          模拟运行模式
+          如果为true，只模拟执行，不实际执行操作
+        required: false
+        type: boolean
+        default: false
+      auto_confirm:
+        description: |
+          自动确认模式
+          如果为true，自动确认所有提示，无需手动输入
+        required: false
+        type: boolean
+        default: true
+      repo_path:
+        description: |
+          本地Git仓库路径
+          不指定则在临时目录中克隆
+        required: false
+        type: string
+      token_secret_name:
+        description: |
+          GitHub Token的Secret名称
+          需要在仓库Settings -> Secrets and variables -> Actions中设置
+          默认: GITHUB_TOKEN (GitHub Actions自动提供的token)
+        required: false
+        type: choice
+        options:
+          - GITHUB_TOKEN
+          - TOKEN
+          - GITEE_TOKEN
+          - ATOMGIT_TOKEN
+        default: GITHUB_TOKEN
+      git_user_name:
+        description: |
+          git user name
+        required: true
+        type: string
+        default: GitHub Actions
+      git_user_email:
+        description: |
+          git user email
+        required: true
+        type: string
+        default: github-actions@github.com
+      timeout_minutes:
+        description: |
+          工作流超时时间(分钟)
+          默认: 30分钟
+        required: false
+        type: number
+        default: 30
+
+jobs:
+  cherry-pick:
+    runs-on: ubuntu-latest
+    # timeout-minutes: ${{ github.event.inputs.timeout_minutes }}
+    
+    steps:
+      - name: 检查输入参数
+        run: |
+          echo "=== 输入参数检查 ==="
+          echo "PR链接: ${{ github.event.inputs.pr_url }}"
+          echo "个人仓库: ${{ github.event.inputs.personal_repo || '未指定' }}"
+          echo "创建Format Patch: ${{ github.event.inputs.patch_file || 'No' }}"
+          echo "创建PR: ${{ github.event.inputs.create_pr }}"
+          echo "目标分支: ${{ github.event.inputs.target_branch }}"
+          echo "目标仓库: ${{ github.event.inputs.target_repo || '未指定，使用默认' }}"
+          echo "源分支名: ${{ github.event.inputs.source_branch_name || '未指定，自动生成' }}"
+          echo "标题前缀: ${{ github.event.inputs.title_prefix || '未指定，使用默认' }}"
+          echo "描述尾部: ${{ github.event.inputs.body_tail || '未指定' }}"
+          echo "Dry-run模式: ${{ github.event.inputs.dry_run }}"
+          echo "自动确认: ${{ github.event.inputs.auto_confirm }}"
+          echo "本地仓库路径: ${{ github.event.inputs.repo_path || '未指定，使用临时目录' }}"
+          echo "Token环境变量: ${{ github.event.inputs.token_secret_name || '未指定' }}"
+          #echo "超时时间: ${{ github.event.inputs.timeout_minutes }}分钟"
+          
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+      
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4     
+
+      - name: 配置Git
+        run: |
+          echo "配置Git用户信息..."
+          git config --global user.name ${{ github.event.inputs.git_user_name }}
+          git config --global user.email ${{ github.event.inputs.git_user_email }}
+
+          
+          echo "配置Git安全设置..."
+          git config --global http.postBuffer 524288000
+      
+      - name: 执行Sync PR
+        env:
+          # 使用动态的secret名称获取token
+          TOKEN: ${{ secrets[github.event.inputs.token_secret_name] }}
+        run: |
+          echo "=== 开始执行Sync PR ==="
+          uv sync          
+          # 构建基本命令
+          CMD="uv run main.py"
+          
+          # 添加必需参数
+          CMD="$CMD \"${{ github.event.inputs.pr_url }}\""
+          
+          # 添加可选参数
+          if [ -n "${{ github.event.inputs.repo_path }}" ]; then
+            CMD="$CMD -r \"${{ github.event.inputs.repo_path }}\""
+          fi
+          
+          if [ -n "${{ github.event.inputs.target_repo }}" ]; then
+            CMD="$CMD --target-repo \"${{ github.event.inputs.target_repo }}\""
+          fi
+          
+          if [ -n "${{ github.event.inputs.personal_repo }}" ]; then
+            CMD="$CMD --personal-repo \"${{ github.event.inputs.personal_repo }}\""
+          fi
+
+          if [ -n "${{ github.event.inputs.patch_file }}" ]; then
+            CMD="$CMD --patch \"${{ github.event.inputs.patch_file}}\""
+          fi
+          
+          if [ "${{ github.event.inputs.create_pr }}" = "true" ]; then
+            CMD="$CMD --create-pr"
+          fi
+
+          if [ -n "${{ github.event.inputs.target_branch }}" ]; then
+            CMD="$CMD --target-branch \"${{ github.event.inputs.target_branch }}\""
+          fi
+          
+          if [ -n "${{ github.event.inputs.source_branch_name }}" ]; then
+            CMD="$CMD -s \"${{ github.event.inputs.source_branch_name }}\""
+          fi
+          
+          if [ -n "${{ github.event.inputs.title_prefix }}" ]; then
+            CMD="$CMD --title-prefix \"${{ github.event.inputs.title_prefix }}\""
+          fi
+          
+          if [ -n "${{ github.event.inputs.body_tail }}" ]; then
+            BODY_TAIL=$(echo -e "${{ github.event.inputs.body_tail }}")
+            CMD="$CMD --body-tail \"$BODY_TAIL\""
+          fi
+          
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            CMD="$CMD --dry-run"
+          fi
+          
+          if [ "${{ github.event.inputs.auto_confirm }}" = "true" ]; then
+            CMD="$CMD -y"
+          fi
+          
+          # 添加token参数
+          if [ -n "${{ github.event.inputs.token_secret_name }}" ]; then
+            CMD="$CMD --token-env-var TOKEN"
+          else
+            echo "⚠️ 未指定token参数，将尝试不使用token执行"
+          fi
+          
+          echo "执行的命令:"
+          echo "$CMD"
+          echo ""
+          
+          # 执行命令
+          eval $CMD
+          
+          EXIT_CODE=$?
+          
+          if [ $EXIT_CODE -eq 0 ]; then
+            echo "✅ Sync PR执行成功"
+          else
+            echo "❌ Sync PR执行失败，退出码: $EXIT_CODE"
+            exit $EXIT_CODE
+          fi
+
+      - uses: actions/upload-artifact@v6
+        if: github.event.inputs.patch_file != ''
+        with:
+          name: pr
+          path: ${{ github.event.inputs.patch_file }}
+
+      - name: 清理工作空间
+        if: always()
+        run: |
+          echo "清理工作空间..."
+          # 清理可能的临时文件
+          find . -name "cherry_pick_*" -type d 2>/dev/null | xargs rm -rf || true
+          
+      - name: 完成通知
+        if: always()
+        run: |
+          echo "=== Sync PR工作流完成 ==="
+          echo "执行时间: $(date)"
+          echo "工作流状态: ${{ job.status }}"
+          
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "🎉 工作流执行成功"
+          else
+            echo "❌ 工作流执行失败"
+          fi
+
