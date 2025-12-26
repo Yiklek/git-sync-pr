@@ -133,7 +133,7 @@ jobs:
           #echo "超时时间: ${{ github.event.inputs.timeout_minutes }}分钟"
           
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
           persist-credentials: true
