@@ -9,7 +9,7 @@ use std::process::{Command, ExitStatus, Output};
 use std::str;
 use tempfile::TempDir;
 use thiserror::Error;
-
+use anyhow::Result;
 // 为Unix平台导入ExitStatusExt（处理ExitStatus::from_raw）
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
@@ -171,7 +171,7 @@ impl CherryPickBot {
         auto_confirm: bool,
         pr_url: String,
         repo_path: Option<&str>,
-    ) -> Result<Self, CherryPickError> {
+    ) -> Result<Self> {
         // 设置工作目录
         let (working_dir, is_temp_dir, using_existing_repo) = match repo_path {
             Some(path) => {
@@ -1106,7 +1106,7 @@ impl CherryPickBot {
         title_prefix: Option<&str>,
         body_tail: Option<&str>,
         patch_file: Option<&str>,
-    ) -> Result<(), CherryPickError> {
+    ) -> Result<()> {
         // 打印启动信息
         println!("{}", "=".repeat(60));
         println!(
@@ -1345,7 +1345,7 @@ struct Cli {
     patch: Option<String>,
 }
 
-fn main() -> Result<(), CherryPickError> {
+fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // 处理token
