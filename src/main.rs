@@ -3,10 +3,10 @@ use regex::Regex;
 use serde::Deserialize;
 use std::env;
 use std::fs;
+use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, ExitStatus, Output};
 use std::str;
-use std::io::Write;
 use tempfile::TempDir;
 use thiserror::Error;
 
@@ -448,7 +448,7 @@ impl CherryPickBot {
     ) -> Result<String, CherryPickError> {
         let platform = self
             .platform
-            .ok_or(CherryPickError::MissingPrInfo("未识别Git平台".to_string()))?;
+            .ok_or(CherryPickError::Other("未识别Git平台".to_string()))?;
         let domain = platform.remote_domain();
 
         if use_ssh {
@@ -516,7 +516,7 @@ impl CherryPickBot {
     }
 
     /// 克隆仓库
-    fn clone_repo(&mut self, repo_full_name: &str) -> Result<(), CherryPickError> {
+    fn clone_repo(&self, repo_full_name: &str) -> Result<(), CherryPickError> {
         if self.using_existing_repo {
             // 检查现有仓库配置
             println!("🔍 检查现有仓库配置...");
@@ -623,7 +623,12 @@ impl CherryPickBot {
         let default_branch = default_branch_line
             .split(':')
             .nth(1)
-            .unwrap()
+            .ok_or_else(|| {
+                CherryPickError::GitCommandFailed(format!(
+                    "无法从{}远程仓库的信息中解析默认分支名",
+                    remote_name
+                ))
+            })?
             .trim()
             .to_string();
 
@@ -847,7 +852,9 @@ impl CherryPickBot {
             let repo_full_name = if let Some(personal_repo) = &self.personal_repo {
                 personal_repo
             } else {
-                self.target_repo.as_ref().unwrap()
+                self.target_repo
+                    .as_ref()
+                    .ok_or_else(|| CherryPickError::Other("target_repo is None".into()))?
             };
 
             let ssh_url = self.get_repo_remote_url(repo_full_name, true)?;
@@ -1127,18 +1134,20 @@ impl CherryPickBot {
         self.parse_pr_url()?;
         println!(
             "📋 PR信息: {}/{}/{}#{}",
-            self.platform.unwrap().as_str(),
-            self.repo_owner.as_ref().unwrap(),
-            self.repo_name.as_ref().unwrap(),
-            self.pr_number.unwrap()
+            self.platform
+                .ok_or_else(|| CherryPickError::Other("platform is None".into()))?
+                .as_str(),
+            self.repo_owner.as_ref().unwrap_or(&"".into()),
+            self.repo_name.as_ref().unwrap_or(&"".into()),
+            self.pr_number.unwrap_or(0)
         );
 
         // 2. 设置目标仓库
         self.target_repo = target_repo.map(|s| s.to_string()).or_else(|| {
             Some(format!(
                 "{}/{}",
-                self.repo_owner.as_ref().unwrap(),
-                self.repo_name.as_ref().unwrap()
+                self.repo_owner.as_ref().unwrap_or(&"".into()),
+                self.repo_name.as_ref().unwrap_or(&"".into())
             ))
         });
 
@@ -1148,14 +1157,17 @@ impl CherryPickBot {
         }
 
         // 4. 克隆/检查仓库 - 修复借用冲突
-        let target_repo_clone = self.target_repo.as_ref().unwrap().clone();
-        self.clone_repo(&target_repo_clone)?;
+        self.clone_repo(
+            self.target_repo
+                .as_ref()
+                .ok_or_else(|| CherryPickError::Other("target_repo is None".into()))?,
+        )?;
 
         // 5. 设置源远程
         let source_repo = format!(
             "{}/{}",
-            self.repo_owner.as_ref().unwrap(),
-            self.repo_name.as_ref().unwrap()
+            self.repo_owner.as_ref().unwrap_or(&"".into()),
+            self.repo_name.as_ref().unwrap_or(&"".into())
         );
         self.setup_remote(self.source_remote_name, &source_repo)?;
 
@@ -1197,7 +1209,7 @@ impl CherryPickBot {
 
             format!(
                 "cherry-pick-pr-{}-to-{}",
-                self.pr_number.unwrap(),
+                self.pr_number.unwrap_or(0),
                 clean_target_branch
             )
         };
@@ -1214,7 +1226,7 @@ impl CherryPickBot {
         // 14. 创建PR（如果需要）
         if create_pr {
             self.create_pull_request(
-                self.target_repo.as_ref().unwrap(),
+                self.target_repo.as_ref().ok_or_else(|| CherryPickError::Other("target_repo is None".into()))?,
                 target_branch,
                 &branch_name,
                 &pr_info,
@@ -1225,7 +1237,7 @@ impl CherryPickBot {
             if self.personal_repo.is_some() {
                 println!(
                     "ℹ️ 自动推送完成，分支已推送到个人仓库: {}",
-                    self.personal_repo.as_ref().unwrap()
+                    self.personal_repo.as_ref().ok_or_else(|| CherryPickError::Other("personal_repo is None".into()))?
                 );
             } else {
                 println!("ℹ️ 自动推送完成，分支: {}", branch_name);
