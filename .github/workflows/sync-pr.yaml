@@ -238,7 +238,7 @@ jobs:
             exit $EXIT_CODE
           fi
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         if: github.event.inputs.patch_file != ''
         with:
           name: pr
